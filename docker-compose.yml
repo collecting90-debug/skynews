@@ -1,0 +1,102 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Fi Elgol News Monitor — Docker Compose
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Redis ──────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: wam-redis
+    restart: unless-stopped
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    networks:
+      - wam-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── FilGoal Monitor ────────────────────────────────────────────────────────
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: filgoal-news-monitor:latest
+    container_name: wam-filgoal-monitor
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SCRAPER_MODE: filgoal
+    volumes:
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - wam-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── Admin API ─────────────────────────────────────────────────────────────
+  admin-api:
+    image: filgoal-news-monitor:latest
+    container_name: wam-admin-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      SCRAPER_MODE: filgoal
+    command: >
+      uvicorn src.api.app:app
+      --host 0.0.0.0
+      --port 8080
+      --workers 1
+      --log-level info
+    ports:
+      - "8080:8080"
+    depends_on:
+      monitor:
+        condition: service_healthy
+    networks:
+      - wam-net
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+# ── Network ─────────────────────────────────────────────────────────────────
+networks:
+  wam-net:
+    driver: bridge
