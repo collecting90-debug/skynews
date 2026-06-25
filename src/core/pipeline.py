@@ -248,6 +248,9 @@ class ArticlePipeline:
         if not saved_row:
             return None
 
+        # 5b. Save slim copy to articles_display for editorial use
+        await self._repository.save_display(article, saved_row["id"])
+
         await self._cache.mark_seen(article.article_hash)
 
         # 6. Send to Telegram
