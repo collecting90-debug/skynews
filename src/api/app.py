@@ -85,14 +85,14 @@ async def get_stats():
     if not _repo:
         raise HTTPException(503, "Database not available")
 
-    uae = await _repo.get_by_classification(NewsClassification.UAE, limit=1)
-    arab = await _repo.get_by_classification(NewsClassification.ARAB, limit=1)
-    glob = await _repo.get_by_classification(NewsClassification.GLOBAL, limit=1)
+    uae_count = await _repo.count_by_classification(NewsClassification.UAE)
+    arab_count = await _repo.count_by_classification(NewsClassification.ARAB)
+    glob_count = await _repo.count_by_classification(NewsClassification.GLOBAL)
 
     return {
         "classifications": {
-            "uae_news": len(uae),
-            "arab_news": len(arab),
-            "global_news": len(glob),
+            "uae_news": uae_count,
+            "arab_news": arab_count,
+            "global_news": glob_count,
         }
     }
