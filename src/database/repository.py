@@ -20,6 +20,7 @@ from src.core.models import Article, NewsClassification, ScrapingStatus
 
 
 TABLE = "articles"
+DISPLAY_TABLE = "articles_display"
 
 
 class ArticleRepository:
@@ -168,17 +169,34 @@ class ArticleRepository:
         return hashes
 
     async def get_all_urls(self) -> set[str]:
-        """Return all stored article URLs for deduplication seeding."""
-        hashes: set[str] = set()
-        result = (
-            await self._db()
-            .table(TABLE)
-            .select("url")
-            .execute()
-        )
-        for row in result.data or []:
-            hashes.add(row["url"])
-        return hashes
+        """Return all stored article URLs for deduplication seeding.
+        Paginates through all records to handle large datasets.
+        """
+        urls: set[str] = set()
+        page_size = 1000
+        offset = 0
+
+        while True:
+            try:
+                result = (
+                    await self._db()
+                    .table(TABLE)
+                    .select("url")
+                    .range(offset, offset + page_size - 1)
+                    .execute()
+                )
+                rows = result.data or []
+                for row in rows:
+                    urls.add(row["url"])
+                if len(rows) < page_size:
+                    break
+                offset += page_size
+            except Exception as exc:
+                logger.error(f"Failed to fetch URLs (offset={offset}): {exc}")
+                break
+
+        logger.info(f"Loaded {len(urls)} existing article URLs from DB")
+        return urls
 
     async def get_recent(self, limit: int = 20) -> list[dict]:
         """Return the most recently scraped articles."""
@@ -191,6 +209,21 @@ class ArticleRepository:
             .execute()
         )
         return result.data or []
+
+    async def count_by_classification(self, classification: NewsClassification) -> int:
+        """Return the total count of articles with the given classification."""
+        try:
+            result = (
+                await self._db()
+                .table(TABLE)
+                .select("id", count="exact")
+                .eq("classification", classification.value)
+                .execute()
+            )
+            return result.count or 0
+        except Exception as exc:
+            logger.warning(f"count_by_classification failed: {exc}")
+            return 0
 
     async def get_by_classification(
         self,
@@ -207,6 +240,33 @@ class ArticleRepository:
             .execute()
         )
         return result.data or []
+
+    # ── Display table ──────────────────────────────────────────────────────────
+
+    async def save_display(self, article: Article, article_db_id: str) -> None:
+        """
+        Insert a slim record into articles_display for editorial use.
+        Contains only: title, image_url, content, summary, publish_date, url.
+        Silently skips if url already exists (UNIQUE constraint).
+        """
+        row = {
+            "article_id":   article_db_id,
+            "url":          article.url,
+            "title":        article.title,
+            "image_url":    article.image_url,
+            "content":      article.content,
+            "summary":      article.summary,
+            "publish_date": article.publish_date.isoformat() if article.publish_date else None,
+        }
+        try:
+            await (
+                self._db()
+                .table(DISPLAY_TABLE)
+                .upsert(row, on_conflict="url", ignore_duplicates=True)
+                .execute()
+            )
+        except Exception as exc:
+            logger.warning(f"save_display failed for {article.url}: {exc}")
 
     # ── Mapping helpers ───────────────────────────────────────────────────────
 
